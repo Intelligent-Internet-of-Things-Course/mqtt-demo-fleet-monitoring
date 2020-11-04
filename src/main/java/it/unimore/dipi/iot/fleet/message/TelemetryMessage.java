@@ -7,7 +7,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * @project mqtt-demo-fleet-monitoring
  * @created 04/11/2020 - 15:56
  */
-public class TelemetryMessage {
+public class TelemetryMessage<T> {
 
     @JsonProperty("timestamp")
     private long timestamp;
@@ -16,18 +16,18 @@ public class TelemetryMessage {
     private String type;
 
     @JsonProperty("data")
-    private Object dataValue;
+    private T dataValue;
 
     public TelemetryMessage() {
     }
 
-    public TelemetryMessage(String type, Object dataValue) {
+    public TelemetryMessage(String type, T dataValue) {
         this.timestamp = System.currentTimeMillis();
         this.type = type;
         this.dataValue = dataValue;
     }
 
-    public TelemetryMessage(long timestamp, String type, Object dataValue) {
+    public TelemetryMessage(long timestamp, String type, T dataValue) {
         this.timestamp = timestamp;
         this.type = type;
         this.dataValue = dataValue;
@@ -49,11 +49,11 @@ public class TelemetryMessage {
         this.type = type;
     }
 
-    public Object getDataValue() {
+    public T getDataValue() {
         return dataValue;
     }
 
-    public void setDataValue(Object dataValue) {
+    public void setDataValue(T dataValue) {
         this.dataValue = dataValue;
     }
 

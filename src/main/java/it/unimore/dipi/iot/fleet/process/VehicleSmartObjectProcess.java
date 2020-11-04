@@ -54,7 +54,7 @@ public class VehicleSmartObjectProcess {
             logger.info("MQTT Client Connected ! Client Id: {}", vehicleId);
 
             VehicleMqttSmartObject vehicleMqttSmartObject = new VehicleMqttSmartObject();
-            vehicleMqttSmartObject.init(vehicleId, mqttClient, new HashMap<String, SmartObjectResource>(){
+            vehicleMqttSmartObject.init(vehicleId, mqttClient, new HashMap<>(){
                 {
                     put("gps", new GpsGpxSensorResource());
                     put("battery", new BatterySensorResource());

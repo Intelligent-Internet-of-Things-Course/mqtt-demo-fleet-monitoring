@@ -5,27 +5,28 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unimore.dipi.iot.fleet.message.ControlMessage;
 import it.unimore.dipi.iot.fleet.message.TelemetryMessage;
-import it.unimore.dipi.iot.fleet.resource.BatterySensorResource;
+import it.unimore.dipi.iot.fleet.model.GpsLocationDescriptor;
+import it.unimore.dipi.iot.fleet.model.TrafficEventDescriptor;
+import it.unimore.dipi.iot.fleet.resource.GpsGpxSensorResource;
+import it.unimore.dipi.iot.fleet.utils.GpsUtils;
 import org.eclipse.paho.client.mqttv3.*;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
- * Battery Level Monitoring for active fleet vehicles
+ * Traffic Monitoring for active fleet vehicles
  *
  * @author Marco Picone, Ph.D. - picone.m@gmail.com
  * @project mqtt-demo-fleet-monitoring
- * @created 04/11/2020 - 16:01
+ * @created 04/11/2020 - 19:40
  */
-public class BatteryMonitoringConsumer {
+public class TrafficMonitoringConsumer {
 
-    private final static Logger logger = LoggerFactory.getLogger(BatteryMonitoringConsumer.class);
+    private final static Logger logger = LoggerFactory.getLogger(TrafficMonitoringConsumer.class);
 
     private static final double ALARM_BATTERY_LEVEL = 2.0;
 
@@ -37,20 +38,27 @@ public class BatteryMonitoringConsumer {
     //PORT of the target MQTT Broker
     private static int BROKER_PORT = 1883;
 
-    //E.g. fleet/vehicle/e0c7433d-8457-4a6b-8084-595d500076cc/telemetry/battery
-    private static final String TARGET_TOPIC = "fleet/vehicle/+/telemetry/battery";
+    //E.g. fleet/vehicle/e0c7433d-8457-4a6b-8084-595d500076cc/telemetry/gps
+    private static final String TARGET_TOPIC = "fleet/vehicle/+/telemetry/gps";
 
-    private static final String ALARM_MESSAGE_CONTROL_TYPE = "battery_alarm_message";
+    private static final String ALARM_MESSAGE_CONTROL_TYPE = "traffic_alarm_message";
 
     private static ObjectMapper mapper;
 
     private static boolean isAlarmNotified = false;
+
+    private static List<TrafficEventDescriptor> trafficEventList;
+
+    //Km threshold to notify a vehicle close to a traffic alert
+    private static double TRAFFIC_EVENT_DISTANCE_ALERT_THRESHOLD = 2;
 
     public static void main(String [ ] args) {
 
     	logger.info("MQTT Consumer Tester Started ...");
 
         try{
+
+            initDemoTrafficEvent();
 
             //Generate a random MQTT client ID using the UUID class
             String clientId = UUID.randomUUID().toString();
@@ -79,45 +87,46 @@ public class BatteryMonitoringConsumer {
 
             logger.info("Connected ! Client Id: {}", clientId);
 
-            Map<String, Double> batteryHistoryMap = new HashMap<>();
             mapper = new ObjectMapper();
 
             //Subscribe to the target topic #. In that case the consumer will receive (if authorized) all the message
             //passing through the broker
+            logger.info("Subscribing to topic: {}", TARGET_TOPIC);
+
             client.subscribe(TARGET_TOPIC, (topic, msg) -> {
 
-                Optional<TelemetryMessage<Double>> telemetryMessageOptional = parseTelemetryMessagePayload(msg);
+                //logger.info("Received Data (Topic: {}) -> Data: {}", topic, new String(msg.getPayload()));
 
-                if(telemetryMessageOptional.isPresent() && telemetryMessageOptional.get().getType().equals(BatterySensorResource.RESOURCE_TYPE)){
+                Optional<TelemetryMessage<GpsLocationDescriptor>> telemetryMessageOptional = parseTelemetryMessagePayload(msg);
 
-                    Double newBatteryLevel = telemetryMessageOptional.get().getDataValue();
-                    logger.info("New Battery Telemetry Data Received ! Battery Level: {}", newBatteryLevel);
+                if(telemetryMessageOptional.isPresent() && telemetryMessageOptional.get().getType().equals(GpsGpxSensorResource.RESOURCE_TYPE)){
 
-                    //If is the first value
-                    if(!batteryHistoryMap.containsKey(topic) || newBatteryLevel > batteryHistoryMap.get(topic)){
-                        logger.info("New Battery Level Saved for: {}", topic);
-                        batteryHistoryMap.put(topic, newBatteryLevel);
-                        isAlarmNotified = false;
+                    GpsLocationDescriptor gpsLocationDescriptor = telemetryMessageOptional.get().getDataValue();
+                    List<TrafficEventDescriptor> trafficEventDescriptorList = getAvailableTrafficEvents(
+                            gpsLocationDescriptor.getLatitude(),
+                            gpsLocationDescriptor.getLongitude());
+
+                    //TODO Improve handling isAlarmNotified Flag
+                    if(trafficEventDescriptorList.size() > 0 && !isAlarmNotified){
+
+                        String targetTopic = String.format("%s/%s", topic.replace("/telemetry/gps", ""), CONTROL_TOPIC);
+
+                        logger.info("Relevant Traffic Event Detected ! Sending Control to: {}", targetTopic);
+
+                        ControlMessage controlMessage = new ControlMessage();
+                        controlMessage.setType(ALARM_MESSAGE_CONTROL_TYPE);
+                        controlMessage.setTimestamp(System.currentTimeMillis());
+                        controlMessage.setMetadata(new HashMap<>(){
+                            {
+                                put("event_list", trafficEventDescriptorList);
+                            }
+                        });
+
+                        publishControlMessage(client, targetTopic, controlMessage);
+
+                        isAlarmNotified = true;
                     }
-                    else {
-                        if(isBatteryLevelAlarm(batteryHistoryMap.get(topic), newBatteryLevel) && !isAlarmNotified){
-                            logger.info("BATTERY LEVEL ALARM DETECTED ! Sending Control Notification ...");
-                            isAlarmNotified = true;
-
-                            //Incoming Topic = fleet/vehicle/fa18f676-8198-4e9f-90e0-c50a5e419b94/telemetry/battery
-                            String controlTopic = String.format("%s/%s", topic.replace("/telemetry/battery", ""), CONTROL_TOPIC);
-                            publishControlMessage(client, controlTopic, new ControlMessage(ALARM_MESSAGE_CONTROL_TYPE, new HashMap<>(){
-                                {
-                                    put("charging_station_id", "cs00001");
-                                    put("charging_station_lat", 44.79503800000001);
-                                    put("charging_station_lng", 10.32686911666667);
-                                }
-                            }));
-                        }
-                    }
-
                 }
-
             });
 
         }catch (Exception e){
@@ -125,11 +134,37 @@ public class BatteryMonitoringConsumer {
         }
     }
 
+    private static void initDemoTrafficEvent() {
+        trafficEventList = new ArrayList<>();
+        trafficEventList.add(new TrafficEventDescriptor(TrafficEventDescriptor.JAM_TRAFFIC_EVENT,
+                44.79503800000001,
+                10.32686911666667,
+                System.currentTimeMillis()));
+    }
+
+    private static List<TrafficEventDescriptor> getAvailableTrafficEvents(double latitude, double longitude){
+
+        if(trafficEventList != null)
+            return trafficEventList.stream().filter(trafficEventDescriptor -> {
+                if(trafficEventDescriptor != null && GpsUtils.distance(
+                        latitude,
+                        longitude,
+                        trafficEventDescriptor.getLatitude(),
+                        trafficEventDescriptor.getLongitude(),
+                        "K") <= TRAFFIC_EVENT_DISTANCE_ALERT_THRESHOLD)
+                    return true;
+                else
+                    return false;
+            }).collect(Collectors.toList());
+        else
+            return new ArrayList<>();
+    }
+
     private static boolean isBatteryLevelAlarm(Double originalValue, Double newValue){
         return originalValue - newValue >= ALARM_BATTERY_LEVEL;
     }
 
-    private static Optional<TelemetryMessage<Double>> parseTelemetryMessagePayload(MqttMessage mqttMessage){
+    private static Optional<TelemetryMessage<GpsLocationDescriptor>> parseTelemetryMessagePayload(MqttMessage mqttMessage){
 
         try{
 
@@ -139,9 +174,10 @@ public class BatteryMonitoringConsumer {
             byte[] payloadByteArray = mqttMessage.getPayload();
             String payloadString = new String(payloadByteArray);
 
-            return Optional.ofNullable(mapper.readValue(payloadString, new TypeReference<TelemetryMessage<Double>>() {}));
+            return Optional.ofNullable(mapper.readValue(payloadString, new TypeReference<TelemetryMessage<GpsLocationDescriptor>>() {}));
 
         }catch (Exception e){
+            e.printStackTrace();
             return Optional.empty();
         }
     }
