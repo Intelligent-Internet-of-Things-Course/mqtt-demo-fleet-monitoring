@@ -1,4 +1,4 @@
-package it.unimore.dipi.iot.fleet;
+package it.unimore.dipi.iot.fleet.test;
 
 import io.jenetics.jpx.GPX;
 import io.jenetics.jpx.Track;

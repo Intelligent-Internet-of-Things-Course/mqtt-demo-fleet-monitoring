@@ -1,4 +1,4 @@
-package it.unimore.dipi.iot.fleet;
+package it.unimore.dipi.iot.fleet.test;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
